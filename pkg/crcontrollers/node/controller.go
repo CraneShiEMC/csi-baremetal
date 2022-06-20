@@ -237,16 +237,7 @@ func (bmc *Controller) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Re
 	// if name in request doesn't start with namePrefix controller tries to read k8s node object at first
 	// however if it get NotFound error it tries to read Node object as well
 	if !strings.HasPrefix(req.Name, namePrefix) {
-		k8sNode := new(coreV1.Node)
-		err = bmc.k8sClient.ReadCR(ctx, req.Name, "", k8sNode)
-		switch {
-		case err == nil:
-			ll.Infof("Reconcile k8s node %s", k8sNode.Name)
-			return bmc.reconcileForK8sNode(k8sNode)
-		case !k8sError.IsNotFound(err):
-			ll.Errorf("Unable to read node object: %v", err)
-			return ctrl.Result{Requeue: true}, err
-		}
+		return bmc.reconcileForK8sNode(req.Name)
 	}
 
 	// try to read Node
@@ -265,11 +256,23 @@ func (bmc *Controller) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Re
 	return ctrl.Result{}, nil
 }
 
-func (bmc *Controller) reconcileForK8sNode(k8sNode *coreV1.Node) (ctrl.Result, error) {
+func (bmc *Controller) reconcileForK8sNode(k8sNodeName string) (ctrl.Result, error) {
 	ll := bmc.log.WithFields(logrus.Fields{
 		"method": "reconcileForK8sNode",
-		"name":   k8sNode.Name,
+		"name":   k8sNodeName,
 	})
+
+	k8sNode := new(coreV1.Node)
+	hasK8sNode := false
+	err1 := bmc.k8sClient.ReadCR(context.Background(), k8sNodeName, "", k8sNode)
+	switch {
+	case err1 == nil:
+		ll.Infof("Reconcile k8s node %s", k8sNode.Name)
+		hasK8sNode = true
+	case !k8sError.IsNotFound(err1):
+		ll.Errorf("Unable to read node object: %v", err1)
+		return ctrl.Result{Requeue: true}, err1
+	}
 
 	if len(k8sNode.Status.Addresses) == 0 {
 		err := errors.New("addresses are missing for current k8s node instance")
@@ -286,8 +289,14 @@ func (bmc *Controller) reconcileForK8sNode(k8sNode *coreV1.Node) (ctrl.Result, e
 	// get corresponding Node CR name from cache
 	if bmNodeName, bmNodeFromCache = bmc.cache.getCSIBMNodeName(k8sNode.Name); bmNodeFromCache {
 		if err := bmc.k8sClient.ReadCR(context.Background(), bmNodeName, "", bmNode); err != nil {
-			ll.Errorf("Unable to read Node %s: %v", bmNodeName, err)
-			return ctrl.Result{Requeue: true}, err
+			if !k8sError.IsNotFound(err) {
+				ll.Errorf("Unable to read Node %s: %v", bmNodeName, err)
+				return ctrl.Result{Requeue: true}, err
+			} else if !hasK8sNode {
+				ll.Infof("k8sNode %s and bmNode %s have been removed, clean it from cache", k8sNodeName, bmNodeName)
+				bmc.cleanNodeFromCache(bmNode.Name, k8sNodeName)
+				return ctrl.Result{}, nil
+			}
 		}
 		bmNodes = []nodecrd.Node{*bmNode}
 	}
