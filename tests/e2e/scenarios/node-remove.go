@@ -44,7 +44,7 @@ func DefineNodeRemovalTestSuite(driver *baremetalDriver) {
 }
 
 func defineNodeRemovalTest(driver *baremetalDriver) {
-	ginkgo.BeforeEach(skipIfNotAllTests)
+	//ginkgo.BeforeEach(skipIfNotAllTests)
 
 	var (
 		pod           *corev1.Pod
@@ -89,7 +89,7 @@ func defineNodeRemovalTest(driver *baremetalDriver) {
 			framework.ExpectNoError(err)
 
 			e2elog.Logf("Count of pods before test was %d, after - %d", len(podsBefore), len(pods))
-			if len(pods) - len(podsBefore) <= 0 {
+			if len(pods)-len(podsBefore) <= 0 {
 				framework.Failf("Csi-baremetal-node not ready")
 			}
 		}
